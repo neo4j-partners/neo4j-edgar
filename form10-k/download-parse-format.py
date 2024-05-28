@@ -34,7 +34,14 @@ def main() -> int:
         print(f'--- Downloading {count:,} of {total:,} 10K filings for {company_name}')
         try:
             raw_files_dir = download_filing(company_name, temp_dir, user_agent, start_date, end_date)
+            if not raw_files_dir:
+                print(f'No files downloaded for {company_name}')
+                continue
+
             filing_list = os.listdir(raw_files_dir)
+            if not filing_list:
+                print(f'No files downloaded for {company_name}')
+                continue
 
             parse_exception_flag = False
             for filing in filing_list:
@@ -45,11 +52,11 @@ def main() -> int:
                     os.remove(raw_file_path)
                 except Exception as e:
                     parse_exception_flag = True
-                    print(e)
+                    print(f'Error parsing {filing} for {company_name}: {e}')
             if not parse_exception_flag:
                 os.rmdir(raw_files_dir)
         except Exception as e:
-            print(e)
+            print(f'Error downloading filings for {company_name}: {e}')
     return 0
 
 
@@ -72,14 +79,23 @@ def parse_args():
 
 
 def download_filing(company_name: str, temp_dir: str, user_agent: str, start_date, end_date):
-    filings_obj = filings(cik_lookup=company_name,
-                          filing_type=FilingType.FILING_10K,
-                          user_agent=user_agent,
-                          end_date=end_date,
-                          start_date=start_date)
-    filings_obj.save(temp_dir, dir_pattern='{cik}')
+    try:
+        filings_obj = filings(cik_lookup=company_name,
+                              filing_type=FilingType.FILING_10K,
+                              user_agent=user_agent,
+                              end_date=end_date,
+                              start_date=start_date)
+        filings_obj.save(temp_dir, dir_pattern='{cik}')
 
-    return os.path.join(temp_dir, company_name)
+        raw_files_dir = os.path.join(temp_dir, company_name)
+        if not os.path.exists(raw_files_dir) or not os.listdir(raw_files_dir):
+            print(f'Warning: No files found in {raw_files_dir} for {company_name}')
+            return None
+
+        return raw_files_dir
+    except Exception as e:
+        print(f'Error downloading filing for {company_name}: {e}')
+        return None
 
 
 def create_company_list(formatted_data_path: str) -> List[str]:
@@ -153,16 +169,29 @@ def extract_section_text(doc: str) -> Dict[str, str]:
 
 
 def load_parse_save(input_file_path: str, output_file_path: str, company_name: str):
-    with open(input_file_path, 'r') as file:
-        raw_txt = file.read()
-    print('Extracting 10-K')
-    doc = extract_10_k(raw_txt)
-    print('Parsing relevant sections')
-    cleaned_json_txt = extract_section_text(doc)
-    cleaned_json_txt['companyName'] = company_name
-    print('Writing clean text to json')
-    with open(output_file_path, 'w') as json_file:
-        json.dump(cleaned_json_txt, json_file, indent=4)
+    try:
+        with open(input_file_path, 'r') as file:
+            raw_txt = file.read()
+        if not raw_txt:
+            print(f"Warning: File {input_file_path} is empty")
+            return
+
+        print('Extracting 10-K')
+        doc = extract_10_k(raw_txt)
+        if not doc:
+            print(f'Warning: No 10-K document found in {input_file_path}')
+            return
+
+        print('Parsing relevant sections')
+        cleaned_json_txt = extract_section_text(doc)
+        cleaned_json_txt['companyName'] = company_name
+        print('Writing clean text to json')
+        with open(output_file_path, 'w') as json_file:
+            json.dump(cleaned_json_txt, json_file, indent=4)
+
+
+    except Exception as e:
+        print(f'Error processing file {input_file_path}: {e}')
 
 
 if __name__ == "__main__":
